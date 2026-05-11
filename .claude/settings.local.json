@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npx prisma *)",
+      "Bash(docker exec cloud-chat-postgres *)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/cloud_chat\" npx prisma migrate dev --name init)",
+      "Bash(npx --yes pg@8 \"postgresql://postgres:postgres@localhost:5432/cloud_chat\" -c \"SELECT 1\")",
+      "Bash(node -e \"const fs=require\\('fs'\\); const buf=fs.readFileSync\\('.env'\\); console.log\\('First bytes hex:', buf.slice\\(0,6\\).toString\\('hex'\\)\\); console.log\\('DATABASE_URL:', process.env.DATABASE_URL\\);\")",
+      "Bash(node -e ' *)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:postgres@localhost:5432/cloud_chat?sslmode=disable\" npx prisma migrate dev --name init)",
+      "PowerShell(Set-Location \"F:\\\\GitHub Repositories\\\\cloud-chat\\\\backend\"; $env:DATABASE_URL = \"postgresql://postgres:postgres@localhost:5432/cloud_chat\"; npx prisma migrate dev --name init 2>&1)",
+      "Bash(docker exec *)",
+      "Bash(npm run *)",
+      "Bash(docker run *)",
+      "Bash(docker network *)",
+      "Bash(docker port *)",
+      "Bash(node -e \"require\\('dotenv'\\).config\\(\\); console.log\\('URL:', JSON.stringify\\(process.env.DATABASE_URL\\)\\); console.log\\('Length:', process.env.DATABASE_URL?.length\\);\")",
+      "Bash(DATABASE_URL=postgresql://postgres:postgres@localhost:5432/cloud_chat node -e ' *)",
+      "Bash(docker compose *)",
+      "Bash(curl -s http://localhost:4000/api/health)",
+      "Bash(curl *)",
+      "Bash(docker-compose up *)",
+      "Bash(npx tsc *)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(docker builder *)"
+    ]
+  }
+}

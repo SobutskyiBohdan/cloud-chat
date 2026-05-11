@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloud-chat-config
+  namespace: cloud-chat
+data:
+  NODE_ENV: "production"
+  JWT_ACCESS_EXPIRES: "15m"
+  JWT_REFRESH_EXPIRES: "7d"
+  SMTP_HOST: "mailhog-service"
+  SMTP_PORT: "1025"
+  SMTP_FROM: "noreply@cloud-chat.app"
+  FRONTEND_URL: "https://cloud-chat.app"
+  PORT: "4000"

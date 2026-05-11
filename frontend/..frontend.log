@@ -1,0 +1,31 @@
+
+> cloud-chat-frontend@1.0.0 dev
+> next dev -p 3000
+
+   ▲ Next.js 15.0.3
+   - Local:        http://localhost:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.6s
+ ✓ Compiled /middleware in 287ms (172 modules)
+ ○ Compiling /login ...
+ ✓ Compiled /login in 3.6s (729 modules)
+ GET /login?from=%2Fchat 200 in 765ms
+ GET /login?from=%2Fchat 200 in 4015ms
+ ✓ Compiled in 286ms (359 modules)
+ GET /login?from=%2Fmanifest.webmanifest 200 in 38ms
+ GET /login?from=%2F.well-known%2Fappspecific%2Fcom.chrome.devtools.json 200 in 38ms
+ GET /login?from=%2Fmanifest.webmanifest 200 in 17ms
+ GET /login? 200 in 22ms
+ GET /login?from=%2F.well-known%2Fappspecific%2Fcom.chrome.devtools.json 200 in 26ms
+ ✓ Compiled /register in 421ms (713 modules)
+ GET /register 200 in 494ms
+ ⚠ Found a change in next.config.ts. Restarting the server to apply the changes...
+   ▲ Next.js 15.0.3
+   - Local:        http://localhost:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.5s
+[?25h
