@@ -12,3 +12,4 @@ data:
   SMTP_FROM: "noreply@cloud-chat.app"
   FRONTEND_URL: "http://45.93.137.117:30082"
   PORT: "4000"
+  COOKIE_SECURE: "false"

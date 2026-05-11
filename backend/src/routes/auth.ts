@@ -8,7 +8,7 @@ import { authMiddleware, AuthRequest } from "../middleware/auth";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../lib/mailer";
 
 const router = Router();
-const IS_PROD = process.env.NODE_ENV === "production";
+const IS_PROD = process.env.COOKIE_SECURE !== "false";
 const REQUIRE_VERIFICATION = process.env.REQUIRE_EMAIL_VERIFICATION === "true";
 
 function setTokenCookies(res: Response, accessToken: string, refreshToken: string) {
