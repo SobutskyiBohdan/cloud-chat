@@ -5,7 +5,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import Image from "next/image";
-import { Trash2, Pencil, Reply, Smile, FileText, Download } from "lucide-react";
+import { Trash2, Pencil, Reply, Smile, FileText, Download, Pin, PinOff, Clock } from "lucide-react";
+import { VoiceMessagePlayer } from "./VoiceRecorder";
+import { PollMessage, type Poll } from "./PollMessage";
 
 const EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
 
@@ -29,9 +31,13 @@ export interface Message {
   chatId: string;
   createdAt: string;
   editedAt: string | null;
+  pinnedAt: string | null;
+  expiresAt: string | null;
   replyTo: ReplyTo | null;
   user: { id: string; name: string; nickname: string | null; avatarUrl: string | null };
   reactions: Reaction[];
+  mentions: { userId: string }[];
+  poll: Poll | null;
 }
 
 interface Props {
@@ -44,9 +50,12 @@ interface Props {
   onReactionChange?: (messageId: string, reactions: Reaction[]) => void;
   onReply?: (message: Message) => void;
   onEdit?: (message: Message) => void;
+  onPinToggle?: (messageId: string, pinnedAt: string | null) => void;
+  readBy?: string[];
 }
 
 function MediaPreview({ url, type, name }: { url: string; type: string | null; name: string | null }) {
+  if (type === "audio") return <VoiceMessagePlayer url={url} name={name} />;
   if (!type || type === "image") {
     return (
       <div className="mb-2 rounded-lg overflow-hidden max-w-[260px]">
@@ -63,11 +72,8 @@ function MediaPreview({ url, type, name }: { url: string; type: string | null; n
   }
   return (
     <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
+      href={url} target="_blank" rel="noopener noreferrer" download={name || true}
       className="mb-2 flex items-center gap-2 bg-black/10 dark:bg-white/10 rounded-lg px-3 py-2 hover:bg-black/20 transition-colors"
-      download={name || true}
     >
       <FileText className="w-5 h-5 shrink-0" />
       <span className="text-sm truncate max-w-[180px]">{name || "File"}</span>
@@ -76,8 +82,52 @@ function MediaPreview({ url, type, name }: { url: string; type: string | null; n
   );
 }
 
-export function MessageBubble({ message, isOwn, currentUserId, chatId, onUserClick, onDeleted, onReactionChange, onReply, onEdit }: Props) {
+function highlightMentions(text: string, mentionedIds: string[], currentUserId?: string) {
+  if (!text.includes("@")) return <span className="whitespace-pre-wrap">{text}</span>;
+  const parts = text.split(/(@[\w._-]+)/g);
+  return (
+    <span className="whitespace-pre-wrap">
+      {parts.map((part, i) => {
+        if (part.startsWith("@")) {
+          return (
+            <span key={i} className="font-semibold text-primary/90 bg-primary/10 rounded px-0.5">
+              {part}
+            </span>
+          );
+        }
+        return part;
+      })}
+    </span>
+  );
+}
+
+function DisappearingTimer({ expiresAt }: { expiresAt: string }) {
+  const [remaining, setRemaining] = useState(() => Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000)));
+
+  useEffect(() => {
+    if (remaining <= 0) return;
+    const id = setInterval(() => {
+      setRemaining((r) => {
+        if (r <= 1) { clearInterval(id); return 0; }
+        return r - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [remaining]);
+
+  const fmt = (s: number) => s >= 3600 ? `${Math.floor(s / 3600)}h` : s >= 60 ? `${Math.floor(s / 60)}m` : `${s}s`;
+
+  return (
+    <span className="flex items-center gap-0.5 text-[10px] opacity-60">
+      <Clock className="w-2.5 h-2.5" />
+      {remaining > 0 ? fmt(remaining) : "expiring"}
+    </span>
+  );
+}
+
+export function MessageBubble({ message, isOwn, currentUserId, chatId, onUserClick, onDeleted, onReactionChange, onReply, onEdit, onPinToggle, readBy }: Props) {
   const [showPicker, setShowPicker] = useState(false);
+  const [poll, setPoll] = useState<Poll | null>(message.poll ?? null);
   const pickerRef = useRef<HTMLDivElement>(null);
 
   const displayName = message.user.nickname ? `@${message.user.nickname}` : message.user.name;
@@ -95,9 +145,7 @@ export function MessageBubble({ message, isOwn, currentUserId, chatId, onUserCli
   useEffect(() => {
     if (!showPicker) return;
     function handleClick(e: MouseEvent) {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setShowPicker(false);
-      }
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setShowPicker(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
@@ -123,54 +171,56 @@ export function MessageBubble({ message, isOwn, currentUserId, chatId, onUserCli
     } catch {}
   }
 
+  async function handlePin() {
+    try {
+      const { message: updated } = await api.post<{ message: Message }>(`/api/chats/${chatId}/messages/${message.id}/pin`, {});
+      onPinToggle?.(message.id, updated.pinnedAt);
+    } catch {}
+  }
+
+  const isPoll = message.mediaType === "poll";
+
   const ActionBar = () => (
     <div className={cn(
       "flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity self-end mb-1 shrink-0",
       isOwn ? "order-first mr-1" : "order-last ml-1"
     )}>
-      <button
-        onClick={() => onReply?.(message)}
-        className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-        title="Reply"
-      >
-        <Reply className="w-3.5 h-3.5" />
-      </button>
-      <div className="relative" ref={pickerRef}>
-        <button
-          onClick={() => setShowPicker((p) => !p)}
-          className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-          title="React"
-        >
-          <Smile className="w-3.5 h-3.5" />
+      {!isPoll && (
+        <button onClick={() => onReply?.(message)} className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="Reply">
+          <Reply className="w-3.5 h-3.5" />
         </button>
-        {showPicker && (
-          <div className={cn(
-            "absolute bottom-full mb-1 flex gap-1 bg-card border rounded-full px-2 py-1.5 shadow-lg z-20 whitespace-nowrap",
-            isOwn ? "right-0" : "left-0"
-          )}>
-            {EMOJIS.map((e) => (
-              <button key={e} onClick={() => handleReact(e)} className="text-sm hover:scale-125 transition-transform leading-none">
-                {e}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      {isOwn && (
-        <button
-          onClick={() => onEdit?.(message)}
-          className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-          title="Edit"
-        >
+      )}
+      {!isPoll && (
+        <div className="relative" ref={pickerRef}>
+          <button onClick={() => setShowPicker((p) => !p)} className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="React">
+            <Smile className="w-3.5 h-3.5" />
+          </button>
+          {showPicker && (
+            <div className={cn(
+              "absolute bottom-full mb-1 flex gap-1 bg-card border rounded-full px-2 py-1.5 shadow-lg z-20 whitespace-nowrap",
+              isOwn ? "right-0" : "left-0"
+            )}>
+              {EMOJIS.map((e) => (
+                <button key={e} onClick={() => handleReact(e)} className="text-sm hover:scale-125 transition-transform leading-none">{e}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <button
+        onClick={handlePin}
+        className={cn("p-1 rounded hover:bg-accent transition-colors", message.pinnedAt ? "text-primary" : "text-muted-foreground hover:text-foreground")}
+        title={message.pinnedAt ? "Unpin" : "Pin"}
+      >
+        {message.pinnedAt ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+      </button>
+      {isOwn && !isPoll && (
+        <button onClick={() => onEdit?.(message)} className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="Edit">
           <Pencil className="w-3.5 h-3.5" />
         </button>
       )}
       {isOwn && (
-        <button
-          onClick={handleDelete}
-          className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-destructive transition-colors"
-          title="Delete"
-        >
+        <button onClick={handleDelete} className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-destructive transition-colors" title="Delete">
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       )}
@@ -202,7 +252,7 @@ export function MessageBubble({ message, isOwn, currentUserId, chatId, onUserCli
             "rounded-2xl px-3 py-2 text-sm break-words min-w-0",
             isOwn ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-muted rounded-bl-sm"
           )}>
-            {message.replyTo && (
+            {message.replyTo && !isPoll && (
               <div className={cn(
                 "mb-2 rounded-lg px-2 py-1 text-xs border-l-2 opacity-80",
                 isOwn ? "bg-primary-foreground/10 border-primary-foreground/40" : "bg-background/50 border-primary"
@@ -214,15 +264,26 @@ export function MessageBubble({ message, isOwn, currentUserId, chatId, onUserCli
               </div>
             )}
 
-            {message.mediaUrl && (
-              <MediaPreview url={message.mediaUrl} type={message.mediaType} name={message.mediaName} />
+            {isPoll && poll ? (
+              <PollMessage poll={poll} currentUserId={currentUserId} onUpdated={setPoll} />
+            ) : (
+              <>
+                {message.mediaUrl && <MediaPreview url={message.mediaUrl} type={message.mediaType} name={message.mediaName} />}
+                {message.content && highlightMentions(message.content, message.mentions.map((m) => m.userId), currentUserId)}
+              </>
             )}
-
-            {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
 
             <div className={cn("flex items-center gap-1 mt-1 justify-end", isOwn ? "text-primary-foreground/60" : "text-muted-foreground")}>
               {message.editedAt && <span className="text-[10px] italic">edited</span>}
+              {message.expiresAt && <DisappearingTimer expiresAt={message.expiresAt} />}
+              {message.pinnedAt && <Pin className="w-2.5 h-2.5 opacity-60" />}
               <span className="text-[10px]">{time}</span>
+              {isOwn && readBy && readBy.length > 0 && (
+                <span className="text-[10px] font-medium opacity-80">✓✓</span>
+              )}
+              {isOwn && (!readBy || readBy.length === 0) && (
+                <span className="text-[10px] opacity-40">✓</span>
+              )}
             </div>
           </div>
         </div>

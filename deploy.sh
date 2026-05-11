@@ -23,6 +23,7 @@ kubectl apply -f k8s/configmap.yaml
 kubectl apply -f k8s/secrets.yaml
 kubectl apply -f k8s/service.yaml
 kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/cronjob.yaml
 
 echo "==> Waiting for deployments..."
 kubectl rollout status deployment/postgres       -n cloud-chat --timeout=120s

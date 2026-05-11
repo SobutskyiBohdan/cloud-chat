@@ -10,9 +10,10 @@ import { api } from "@/lib/api";
 import { MessageInput } from "./MessageInput";
 import { MessageBubble } from "./MessageBubble";
 import type { Message } from "./MessageBubble";
+import type { Poll } from "./PollMessage";
 import { UserProfileDialog } from "@/components/profile/UserProfileDialog";
 import { GroupInfoDialog } from "./GroupInfoDialog";
-import { ArrowLeft, Loader2, Users } from "lucide-react";
+import { ArrowLeft, Loader2, Users, Search, Pin, X } from "lucide-react";
 import Link from "next/link";
 
 interface Chat {
@@ -22,7 +23,6 @@ interface Chat {
   avatarUrl: string | null;
   members: Array<{ id: string; role: string; user: { id: string; name: string; nickname: string | null; avatarUrl: string | null } }>;
 }
-
 interface Me { id: string; name: string }
 
 export function ChatWindow({ chatId }: { chatId: string }) {
@@ -39,6 +39,20 @@ export function ChatWindow({ chatId }: { chatId: string }) {
   const [otherOnline, setOtherOnline] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editMessage, setEditMessage] = useState<Message | null>(null);
+
+  // Search
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Message[] | null>(null);
+  const [searching, setSearching] = useState(false);
+
+  // Pinned messages
+  const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
+  const [showPinned, setShowPinned] = useState(false);
+
+  // Read receipts: userId → lastReadAt
+  const [readStatus, setReadStatus] = useState<Record<string, Date>>({});
+
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const loadMessages = useCallback(async (cursor?: string) => {
@@ -60,15 +74,26 @@ export function ChatWindow({ chatId }: { chatId: string }) {
     }
   }, [chatId, router]);
 
+  const loadPinned = useCallback(async () => {
+    try {
+      const { messages } = await api.get<{ messages: Message[] }>(`/api/chats/${chatId}/pinned`);
+      setPinnedMessages(messages);
+    } catch {}
+  }, [chatId]);
+
   useEffect(() => {
     setLoading(true);
     setMessages([]);
     setReplyTo(null);
     setEditMessage(null);
+    setSearchResults(null);
+    setShowSearch(false);
+    setReadStatus({});
     loadMessages();
+    loadPinned();
     api.get<{ chat: Chat }>(`/api/chats/${chatId}`).then(({ chat }) => setChat(chat)).catch(() => {});
     api.get<{ user: Me }>("/api/auth/me").then(({ user }) => setMe(user)).catch(() => {});
-  }, [chatId, loadMessages]);
+  }, [chatId, loadMessages, loadPinned]);
 
   useEffect(() => {
     if (!chat || !me || chat.isGroup) return;
@@ -85,7 +110,7 @@ export function ChatWindow({ chatId }: { chatId: string }) {
 
     socket.on("message:new", (msg: Message) => {
       if (msg.chatId !== chatId) return;
-      setMessages((prev) => [...prev, { ...msg, reactions: msg.reactions ?? [], replyTo: msg.replyTo ?? null }]);
+      setMessages((prev) => [...prev, { ...msg, reactions: msg.reactions ?? [], replyTo: msg.replyTo ?? null, mentions: msg.mentions ?? [], poll: msg.poll ?? null, pinnedAt: msg.pinnedAt ?? null, expiresAt: msg.expiresAt ?? null }]);
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
       api.patch(`/api/chats/${chatId}/read`).catch(() => {});
     });
@@ -96,6 +121,36 @@ export function ChatWindow({ chatId }: { chatId: string }) {
 
     socket.on("message:deleted", ({ messageId }: { chatId: string; messageId: string }) => {
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      setPinnedMessages((prev) => prev.filter((m) => m.id !== messageId));
+    });
+
+    socket.on("message:pinned", ({ messageId, pinnedAt }: { messageId: string; chatId: string; pinnedAt: string }) => {
+      setMessages((prev) => prev.map((m) => m.id === messageId ? { ...m, pinnedAt } : m));
+      loadPinned();
+    });
+
+    socket.on("message:unpinned", ({ messageId }: { messageId: string }) => {
+      setMessages((prev) => prev.map((m) => m.id === messageId ? { ...m, pinnedAt: null } : m));
+      setPinnedMessages((prev) => prev.filter((m) => m.id !== messageId));
+    });
+
+    socket.on("message:reaction", ({ messageId, userId: uid, emoji, action, reactionId }: { messageId: string; userId: string; emoji: string; action: "added" | "removed"; reactionId?: string }) => {
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== messageId) return m;
+        if (action === "removed") return { ...m, reactions: m.reactions.filter((r) => !(r.userId === uid && r.emoji === emoji)) };
+        const already = m.reactions.some((r) => r.userId === uid && r.emoji === emoji);
+        if (already) return m;
+        return { ...m, reactions: [...m.reactions, { id: reactionId ?? "", userId: uid, emoji }] };
+      }));
+    });
+
+    socket.on("poll:updated", ({ messageId, poll }: { messageId: string; poll: Poll }) => {
+      setMessages((prev) => prev.map((m) => m.id === messageId ? { ...m, poll } : m));
+    });
+
+    socket.on("chat:read", ({ userId: uid, lastReadAt }: { chatId: string; userId: string; lastReadAt: string }) => {
+      if (uid === me?.id) return;
+      setReadStatus((prev) => ({ ...prev, [uid]: new Date(lastReadAt) }));
     });
 
     socket.on("typing:user", ({ userId: uid, chatId: cid }: { userId: string; chatId: string }) => {
@@ -130,16 +185,21 @@ export function ChatWindow({ chatId }: { chatId: string }) {
       socket.off("message:new");
       socket.off("message:edited");
       socket.off("message:deleted");
+      socket.off("message:pinned");
+      socket.off("message:unpinned");
+      socket.off("message:reaction");
+      socket.off("poll:updated");
+      socket.off("chat:read");
       socket.off("typing:user");
       socket.off("typing:stopped");
       socket.off("user:online");
       socket.off("user:offline");
     };
-  }, [socket, chatId, me]);
+  }, [socket, chatId, me, loadPinned]);
 
-  async function sendMessage(content: string, mediaUrl?: string, mediaType?: string, mediaName?: string, replyToId?: string) {
+  async function sendMessage(content: string, mediaUrl?: string, mediaType?: string, mediaName?: string, replyToId?: string, expiresIn?: number) {
     const { message } = await api.post<{ message: Message }>(`/api/chats/${chatId}/messages`, {
-      content, mediaUrl, mediaType, mediaName, replyToId,
+      content, mediaUrl, mediaType, mediaName, replyToId, expiresIn,
     });
     socket?.emit("message:send", { chatId, content, mediaUrl, mediaType, mediaName, replyToId, id: message.id });
     setReplyTo(null);
@@ -150,6 +210,32 @@ export function ChatWindow({ chatId }: { chatId: string }) {
     setMessages((prev) => prev.map((m) => m.id === messageId ? { ...m, content: message.content, editedAt: message.editedAt } : m));
     socket?.emit("message:edited", { chatId, messageId, content: message.content, editedAt: message.editedAt });
     setEditMessage(null);
+  }
+
+  async function handleSearch(q: string) {
+    setSearchQuery(q);
+    if (!q.trim()) { setSearchResults(null); return; }
+    setSearching(true);
+    try {
+      const { messages } = await api.get<{ messages: Message[] }>(`/api/chats/${chatId}/messages/search?q=${encodeURIComponent(q)}`);
+      setSearchResults(messages);
+    } catch {
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function getLastSentReadBy(): string[] {
+    if (!me) return [];
+    const otherIds = chat?.members.filter((m) => m.user.id !== me.id).map((m) => m.user.id) ?? [];
+    const myMessages = messages.filter((m) => m.userId === me.id);
+    if (!myMessages.length) return [];
+    const lastMsg = myMessages[myMessages.length - 1];
+    const lastMsgTime = new Date(lastMsg.createdAt);
+    return otherIds.filter((uid) => {
+      const readAt = readStatus[uid];
+      return readAt && readAt >= lastMsgTime;
+    });
   }
 
   function getChatName(): string {
@@ -168,30 +254,26 @@ export function ChatWindow({ chatId }: { chatId: string }) {
   }
 
   const chatName = getChatName();
+  const displayMessages = searchResults ?? messages;
+  const readBy = getLastSentReadBy();
 
   return (
     <div className="flex flex-col flex-1 h-full">
+      {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b bg-card">
         <Button variant="ghost" size="icon" className="md:hidden" asChild>
           <Link href="/chat"><ArrowLeft className="w-4 h-4" /></Link>
         </Button>
 
         {chat && !chat.isGroup ? (
-          <button
-            className="flex items-center gap-3 hover:bg-accent/50 rounded-lg px-2 py-1 -mx-2 transition-colors"
-            onClick={() => {
-              const other = chat.members.find((m) => m.user.id !== me?.id);
-              if (other) setViewUserId(other.user.id);
-            }}
-          >
+          <button className="flex items-center gap-3 hover:bg-accent/50 rounded-lg px-2 py-1 -mx-2 transition-colors"
+            onClick={() => { const other = chat.members.find((m) => m.user.id !== me?.id); if (other) setViewUserId(other.user.id); }}>
             <div className="relative shrink-0">
               <Avatar className="h-9 w-9">
                 <AvatarImage src={getChatAvatar()} />
                 <AvatarFallback className="text-xs">{chatName.slice(0, 2).toUpperCase()}</AvatarFallback>
               </Avatar>
-              {otherOnline && (
-                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-card" />
-              )}
+              {otherOnline && <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-card" />}
             </div>
             <div className="text-left">
               <p className="font-semibold text-sm">{chatName}</p>
@@ -202,10 +284,8 @@ export function ChatWindow({ chatId }: { chatId: string }) {
             </div>
           </button>
         ) : (
-          <button
-            className="flex items-center gap-3 hover:bg-accent/50 rounded-lg px-2 py-1 -mx-2 transition-colors"
-            onClick={() => chat?.isGroup && setShowGroupInfo(true)}
-          >
+          <button className="flex items-center gap-3 hover:bg-accent/50 rounded-lg px-2 py-1 -mx-2 transition-colors"
+            onClick={() => chat?.isGroup && setShowGroupInfo(true)}>
             <Avatar className="h-9 w-9 shrink-0">
               <AvatarImage src={getChatAvatar()} />
               <AvatarFallback className="text-xs">{chatName.slice(0, 2).toUpperCase()}</AvatarFallback>
@@ -214,23 +294,67 @@ export function ChatWindow({ chatId }: { chatId: string }) {
               <p className="font-semibold text-sm">{chatName}</p>
               {typingUsers.length > 0
                 ? <p className="text-xs text-primary">typing...</p>
-                : chat?.isGroup && (
-                  <p className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Users className="w-3 h-3" />{chat.members.length} members
-                  </p>
-                )
+                : chat?.isGroup && <p className="text-xs text-muted-foreground flex items-center gap-1"><Users className="w-3 h-3" />{chat.members.length} members</p>
               }
             </div>
           </button>
         )}
 
-        {chat?.isGroup && (
-          <Button variant="ghost" size="icon" className="ml-auto" onClick={() => setShowGroupInfo(true)} title="Group info">
-            <Users className="w-4 h-4" />
+        <div className="ml-auto flex items-center gap-1">
+          {pinnedMessages.length > 0 && (
+            <Button variant="ghost" size="icon" onClick={() => setShowPinned((p) => !p)} title="Pinned messages"
+              className={showPinned ? "text-primary" : ""}>
+              <Pin className="w-4 h-4" />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" onClick={() => { setShowSearch((p) => !p); if (showSearch) { setSearchQuery(""); setSearchResults(null); } }} title="Search">
+            <Search className="w-4 h-4" />
           </Button>
-        )}
+          {chat?.isGroup && (
+            <Button variant="ghost" size="icon" onClick={() => setShowGroupInfo(true)} title="Group info">
+              <Users className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
+      {/* Search bar */}
+      {showSearch && (
+        <div className="px-3 py-2 border-b bg-card flex gap-2 items-center">
+          <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+          <input
+            autoFocus
+            className="flex-1 text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+            placeholder="Search in this chat..."
+            value={searchQuery}
+            onChange={(e) => handleSearch(e.target.value)}
+          />
+          {searching && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+          {searchResults !== null && !searching && (
+            <span className="text-xs text-muted-foreground">{searchResults.length} result{searchResults.length !== 1 ? "s" : ""}</span>
+          )}
+          <button onClick={() => { setSearchQuery(""); setSearchResults(null); setShowSearch(false); }} className="text-muted-foreground hover:text-foreground">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Pinned messages panel */}
+      {showPinned && pinnedMessages.length > 0 && (
+        <div className="border-b bg-muted/30 px-4 py-2 space-y-1 max-h-40 overflow-y-auto">
+          <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1 mb-1">
+            <Pin className="w-3 h-3" /> Pinned messages
+          </p>
+          {pinnedMessages.map((m) => (
+            <div key={m.id} className="text-xs flex items-start gap-2">
+              <span className="font-medium shrink-0">{m.user.nickname ? `@${m.user.nickname}` : m.user.name}:</span>
+              <span className="text-muted-foreground truncate">{m.mediaType === "poll" ? "📊 Poll" : m.content || "📎 Attachment"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center h-full">
@@ -238,30 +362,42 @@ export function ChatWindow({ chatId }: { chatId: string }) {
           </div>
         ) : (
           <div className="p-4 space-y-0">
-            {nextCursor && (
+            {!searchResults && nextCursor && (
               <div className="flex justify-center py-2">
                 <Button variant="ghost" size="sm" onClick={() => loadMessages(nextCursor)}>Load older messages</Button>
               </div>
             )}
-            {messages.map((msg) => (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                isOwn={msg.userId === me?.id}
-                currentUserId={me?.id}
-                chatId={chatId}
-                onUserClick={(uid) => setViewUserId(uid)}
-                onDeleted={(id) => {
-                  setMessages((prev) => prev.filter((m) => m.id !== id));
-                  socket?.emit("message:deleted", { chatId, messageId: id });
-                }}
-                onReactionChange={(id, reactions) =>
-                  setMessages((prev) => prev.map((m) => m.id === id ? { ...m, reactions } : m))
-                }
-                onReply={(msg) => { setEditMessage(null); setReplyTo(msg); }}
-                onEdit={(msg) => { setReplyTo(null); setEditMessage(msg); }}
-              />
-            ))}
+            {searchResults !== null && searchResults.length === 0 && (
+              <p className="text-center text-muted-foreground text-sm py-8">No messages found</p>
+            )}
+            {displayMessages.map((msg, idx) => {
+              const isLast = idx === displayMessages.length - 1;
+              const isLastSent = msg.userId === me?.id && isLast;
+              return (
+                <MessageBubble
+                  key={msg.id}
+                  message={msg}
+                  isOwn={msg.userId === me?.id}
+                  currentUserId={me?.id}
+                  chatId={chatId}
+                  readBy={isLastSent ? readBy : undefined}
+                  onUserClick={(uid) => setViewUserId(uid)}
+                  onDeleted={(id) => {
+                    setMessages((prev) => prev.filter((m) => m.id !== id));
+                    socket?.emit("message:deleted", { chatId, messageId: id });
+                  }}
+                  onReactionChange={(id, reactions) =>
+                    setMessages((prev) => prev.map((m) => m.id === id ? { ...m, reactions } : m))
+                  }
+                  onReply={(msg) => { setEditMessage(null); setReplyTo(msg); }}
+                  onEdit={(msg) => { setReplyTo(null); setEditMessage(msg); }}
+                  onPinToggle={(messageId, pinnedAt) => {
+                    setMessages((prev) => prev.map((m) => m.id === messageId ? { ...m, pinnedAt } : m));
+                    loadPinned();
+                  }}
+                />
+              );
+            })}
             <div ref={bottomRef} />
           </div>
         )}
@@ -270,6 +406,7 @@ export function ChatWindow({ chatId }: { chatId: string }) {
       <Separator />
       <MessageInput
         chatId={chatId}
+        members={chat?.members}
         onSend={sendMessage}
         onTyping={(typing) => { if (typing) socket?.emit("typing:start", chatId); else socket?.emit("typing:stop", chatId); }}
         replyTo={replyTo}
@@ -279,19 +416,11 @@ export function ChatWindow({ chatId }: { chatId: string }) {
         onEdit={handleEditMessage}
       />
 
-      <UserProfileDialog
-        userId={viewUserId}
-        onClose={() => setViewUserId(null)}
-        onOpenChat={(id) => { setViewUserId(null); router.push(`/chat/${id}`); }}
-      />
+      <UserProfileDialog userId={viewUserId} onClose={() => setViewUserId(null)}
+        onOpenChat={(id) => { setViewUserId(null); router.push(`/chat/${id}`); }} />
 
       {showGroupInfo && chat && me && (
-        <GroupInfoDialog
-          chat={chat}
-          currentUserId={me.id}
-          onClose={() => setShowGroupInfo(false)}
-          onUpdated={(updated) => setChat(updated)}
-        />
+        <GroupInfoDialog chat={chat} currentUserId={me.id} onClose={() => setShowGroupInfo(false)} onUpdated={(updated) => setChat(updated)} />
       )}
     </div>
   );

@@ -30,6 +30,8 @@ model User {
   messages       Message[]
   memberships    ChatMember[]
   reactions      Reaction[]
+  mentions       Mention[]
+  pollVotes      PollVote[]
   adminActions   AdminLog[]             @relation("AdminActions")
   adminTargets   AdminLog[]             @relation("AdminTargets")
   emailTokens    EmailVerificationToken[]
@@ -94,6 +96,8 @@ model Message {
   replyToId String?
   editedAt  DateTime?
   deletedAt DateTime?
+  pinnedAt  DateTime?
+  expiresAt DateTime?
   createdAt DateTime  @default(now())
 
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -101,6 +105,8 @@ model Message {
   replyTo   Message?   @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
   replies   Message[]  @relation("MessageReplies")
   reactions Reaction[]
+  mentions  Mention[]
+  poll      Poll?
 }
 
 model Reaction {
@@ -114,6 +120,49 @@ model Reaction {
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([messageId, userId, emoji])
+}
+
+model Mention {
+  id        String @id @default(cuid())
+  messageId String
+  userId    String
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+}
+
+model Poll {
+  id             String      @id @default(cuid())
+  messageId      String      @unique
+  question       String
+  multipleChoice Boolean     @default(false)
+  expiresAt      DateTime?
+  createdAt      DateTime    @default(now())
+
+  message Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  options PollOption[]
+}
+
+model PollOption {
+  id     String     @id @default(cuid())
+  pollId String
+  text   String
+
+  poll  Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes PollVote[]
+}
+
+model PollVote {
+  id       String @id @default(cuid())
+  optionId String
+  userId   String
+
+  option PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([optionId, userId])
 }
 
 model GlobalSettings {

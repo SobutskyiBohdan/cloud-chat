@@ -8,6 +8,7 @@ import { initSocket } from "./socket";
 import authRoutes from "./routes/auth";
 import usersRoutes from "./routes/users";
 import chatsRoutes from "./routes/chats";
+import pollsRoutes from "./routes/polls";
 import adminRoutes from "./routes/admin";
 import { prisma } from "./lib/prisma";
 
@@ -32,6 +33,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/chats", chatsRoutes);
+app.use("/api/polls", pollsRoutes);
 app.use("/api/admin", adminRoutes);
 
 // Health check
