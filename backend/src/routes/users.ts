@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { authMiddleware, AuthRequest } from "../middleware/auth";
 import { uploadImage } from "../lib/cloudinary";
+import { getRedis, REDIS_KEYS } from "../lib/redis";
 
 const router = Router();
 
@@ -89,6 +90,17 @@ router.post("/avatar", authMiddleware, async (req: AuthRequest, res: Response) =
   } catch {
     res.status(500).json({ error: "Upload failed" });
   }
+});
+
+// GET /api/users/online — check which user IDs are currently online
+router.get("/online", authMiddleware, async (req: AuthRequest, res: Response) => {
+  const ids = ((req.query.ids as string) || "").split(",").filter(Boolean);
+  if (!ids.length) { res.json({ onlineIds: [] }); return; }
+
+  const redis = getRedis();
+  const results = await Promise.all(ids.map((id) => redis.hexists(REDIS_KEYS.activeSockets, id)));
+  const onlineIds = ids.filter((_, i) => results[i]);
+  res.json({ onlineIds });
 });
 
 // GET /api/users/:userId — public profile

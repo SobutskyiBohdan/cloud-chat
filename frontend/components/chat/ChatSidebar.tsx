@@ -20,8 +20,10 @@ interface Chat {
   id: string;
   name: string | null;
   isGroup: boolean;
+  avatarUrl: string | null;
   members: Array<{ user: { id: string; name: string; nickname: string | null; avatarUrl: string | null } }>;
   messages: Array<{ content: string; user: { name: string }; createdAt: string }>;
+  unreadCount: number;
 }
 
 interface Me {
@@ -40,25 +42,64 @@ export function ChatSidebar({ className }: { className?: string }) {
   const [search, setSearch] = useState("");
   const [showNewChat, setShowNewChat] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
   const { theme, toggle: toggleTheme } = useTheme();
 
   const loadChats = useCallback(async () => {
     try {
       const { chats } = await api.get<{ chats: Chat[] }>("/api/chats");
       setChats(chats);
+      return chats;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const checkOnline = useCallback(async (chats: Chat[], currentUserId: string) => {
+    const otherIds = [...new Set(
+      chats
+        .filter((c) => !c.isGroup)
+        .map((c) => c.members.find((m) => m.user.id !== currentUserId)?.user.id)
+        .filter(Boolean) as string[]
+    )];
+    if (!otherIds.length) return;
+    try {
+      const { onlineIds: ids } = await api.get<{ onlineIds: string[] }>(`/api/users/online?ids=${otherIds.join(",")}`);
+      setOnlineIds(new Set(ids));
     } catch {}
   }, []);
 
   useEffect(() => {
-    loadChats();
-    api.get<{ user: Me }>("/api/auth/me").then(({ user }) => setMe(user)).catch(() => {});
-  }, [loadChats]);
+    api.get<{ user: Me }>("/api/auth/me").then(({ user }) => {
+      setMe(user);
+      loadChats().then((chats) => checkOnline(chats, user.id));
+    }).catch(() => {});
+  }, [loadChats, checkOnline]);
 
   useEffect(() => {
     if (!socket) return;
-    socket.on("message:new", () => loadChats());
-    return () => { socket.off("message:new"); };
-  }, [socket, loadChats]);
+    socket.on("message:new", () => {
+      loadChats().then((chats) => { if (me) checkOnline(chats, me.id); });
+    });
+    socket.on("chat:added", ({ chat }: { chat: Chat }) => {
+      setChats((prev) => {
+        if (prev.some((c) => c.id === chat.id)) return prev;
+        return [chat, ...prev];
+      });
+    });
+    socket.on("user:online", ({ userId }: { userId: string }) => {
+      setOnlineIds((prev) => new Set([...prev, userId]));
+    });
+    socket.on("user:offline", ({ userId }: { userId: string }) => {
+      setOnlineIds((prev) => { const s = new Set(prev); s.delete(userId); return s; });
+    });
+    return () => {
+      socket.off("message:new");
+      socket.off("chat:added");
+      socket.off("user:online");
+      socket.off("user:offline");
+    };
+  }, [socket, loadChats, me, checkOnline]);
 
   async function handleLogout() {
     await api.post("/api/auth/logout");
@@ -73,9 +114,14 @@ export function ChatSidebar({ className }: { className?: string }) {
   }
 
   function getChatAvatar(chat: Chat): string {
-    if (chat.isGroup) return "";
+    if (chat.isGroup) return chat.avatarUrl || "";
     const other = chat.members.find((m) => m.user.id !== me?.id);
     return other?.user.avatarUrl || "";
+  }
+
+  function getOtherId(chat: Chat): string | undefined {
+    if (chat.isGroup) return undefined;
+    return chat.members.find((m) => m.user.id !== me?.id)?.user.id;
   }
 
   function initials(name: string) {
@@ -131,25 +177,41 @@ export function ChatSidebar({ className }: { className?: string }) {
               const avatar = getChatAvatar(chat);
               const lastMsg = chat.messages[0];
               const isActive = pathname === `/chat/${chat.id}`;
+              const otherId = getOtherId(chat);
+              const isOnline = otherId ? onlineIds.has(otherId) : false;
 
               return (
                 <Link key={chat.id} href={`/chat/${chat.id}`}>
                   <div className={cn("flex items-center gap-3 px-4 py-3 hover:bg-accent cursor-pointer transition-colors", isActive && "bg-accent")}>
-                    <Avatar className="h-11 w-11 shrink-0">
-                      <AvatarImage src={avatar} />
-                      <AvatarFallback>{initials(name)}</AvatarFallback>
-                    </Avatar>
+                    <div className="relative shrink-0">
+                      <Avatar className="h-11 w-11">
+                        <AvatarImage src={avatar} />
+                        <AvatarFallback>{initials(name)}</AvatarFallback>
+                      </Avatar>
+                      {isOnline && (
+                        <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-card" />
+                      )}
+                    </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium text-sm truncate">{name}</span>
-                        {lastMsg && (
-                          <span className="text-xs text-muted-foreground shrink-0 ml-1">
-                            {new Date(lastMsg.createdAt).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" })}
-                          </span>
-                        )}
+                      <div className="flex items-center justify-between gap-1">
+                        <span className={cn("font-medium text-sm truncate", chat.unreadCount > 0 && "font-semibold")}>{name}</span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {lastMsg && (
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(lastMsg.createdAt).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          )}
+                          {chat.unreadCount > 0 && (
+                            <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold bg-primary text-primary-foreground rounded-full">
+                              {chat.unreadCount > 99 ? "99+" : chat.unreadCount}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       {lastMsg && (
-                        <p className="text-xs text-muted-foreground truncate">{lastMsg.user.name}: {lastMsg.content}</p>
+                        <p className={cn("text-xs truncate", chat.unreadCount > 0 ? "text-foreground font-medium" : "text-muted-foreground")}>
+                          {lastMsg.user.name}: {lastMsg.content}
+                        </p>
                       )}
                     </div>
                   </div>
@@ -174,6 +236,8 @@ export function ChatSidebar({ className }: { className?: string }) {
                 <p className="text-sm font-medium truncate">{me.name}</p>
                 {me.role === "ADMIN"
                   ? <span className="text-xs text-primary font-medium">Admin</span>
+                  : me.role === "MODERATOR"
+                  ? <span className="text-xs text-orange-500 font-medium">Moderator</span>
                   : <span className="text-xs text-muted-foreground">Edit profile</span>
                 }
               </div>

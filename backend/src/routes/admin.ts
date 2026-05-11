@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { getRedis, getPubClient, REDIS_KEYS, REDIS_CHANNELS } from "../lib/redis";
 import { authMiddleware, adminMiddleware, AuthRequest } from "../middleware/auth";
+import { cloudinary } from "../lib/cloudinary";
 
 const router = Router();
 router.use(authMiddleware, adminMiddleware);
@@ -67,6 +68,31 @@ router.post("/users/:id/block", async (req: AuthRequest, res: Response) => {
   }
 
   res.json({ success: true, isBlocked: block });
+});
+
+// POST /api/admin/users/:id/role — change user role
+router.post("/users/:id/role", async (req: AuthRequest, res: Response) => {
+  const targetId = req.params.id as string;
+  const { role } = req.body;
+
+  if (!["USER", "MODERATOR", "ADMIN"].includes(role)) {
+    res.status(400).json({ error: "Invalid role" }); return;
+  }
+  if (targetId === req.user!.userId) {
+    res.status(400).json({ error: "Cannot change your own role" }); return;
+  }
+
+  const user = await prisma.user.update({
+    where: { id: targetId },
+    data: { role },
+    select: { id: true, name: true, email: true, role: true },
+  });
+
+  await prisma.adminLog.create({
+    data: { adminId: req.user!.userId, targetId, action: "CHANGE_ROLE", details: `Role changed to ${role} for ${user.email}` },
+  });
+
+  res.json({ user });
 });
 
 // ─── Groups ───────────────────────────────────────────────────────────────────
@@ -204,6 +230,75 @@ router.get("/logs", async (req: AuthRequest, res: Response) => {
   ]);
 
   res.json({ logs, total, pages: Math.ceil(total / limit) });
+});
+
+// ─── Cloudinary ───────────────────────────────────────────────────────────────
+
+router.get("/cloudinary", async (req: AuthRequest, res: Response) => {
+  try {
+    const [usageResult, assetsResult] = await Promise.all([
+      cloudinary.api.usage(),
+      cloudinary.api.resources({ type: "upload", prefix: "cloud-chat", max_results: 500 }),
+    ]);
+
+    const [dbUsers, dbMessages] = await Promise.all([
+      prisma.user.findMany({ where: { avatarUrl: { not: null } }, select: { avatarUrl: true } }),
+      prisma.message.findMany({ where: { mediaUrl: { not: null } }, select: { mediaUrl: true } }),
+    ]);
+
+    const dbUrls = new Set([
+      ...dbUsers.map((u) => u.avatarUrl as string),
+      ...dbMessages.map((m) => m.mediaUrl as string),
+    ]);
+
+    const allAssets: Array<{ public_id: string; secure_url: string; bytes: number; created_at: string; resource_type: string }> = assetsResult.resources;
+    const orphans = allAssets.filter((a) => !Array.from(dbUrls).some((url) => url.includes(a.public_id)));
+    const orphanBytes = orphans.reduce((sum, a) => sum + a.bytes, 0);
+    const totalBytes = allAssets.reduce((sum, a) => sum + a.bytes, 0);
+
+    res.json({
+      usage: { credits: usageResult.credits, storage: usageResult.storage, bandwidth: usageResult.bandwidth },
+      totalAssets: allAssets.length,
+      totalBytes,
+      orphanCount: orphans.length,
+      orphanBytes,
+      orphans: orphans.slice(0, 50),
+    });
+  } catch {
+    res.status(500).json({ error: "Cloudinary API error" });
+  }
+});
+
+router.delete("/cloudinary/orphans", async (req: AuthRequest, res: Response) => {
+  try {
+    const assetsResult = await cloudinary.api.resources({ type: "upload", prefix: "cloud-chat", max_results: 500 });
+
+    const [dbUsers, dbMessages] = await Promise.all([
+      prisma.user.findMany({ where: { avatarUrl: { not: null } }, select: { avatarUrl: true } }),
+      prisma.message.findMany({ where: { mediaUrl: { not: null } }, select: { mediaUrl: true } }),
+    ]);
+
+    const dbUrls = new Set([
+      ...dbUsers.map((u) => u.avatarUrl as string),
+      ...dbMessages.map((m) => m.mediaUrl as string),
+    ]);
+
+    const orphans: Array<{ public_id: string }> = assetsResult.resources.filter(
+      (a: { public_id: string }) => !Array.from(dbUrls).some((url) => url.includes(a.public_id))
+    );
+
+    if (orphans.length > 0) {
+      await cloudinary.api.delete_resources(orphans.map((a) => a.public_id));
+    }
+
+    await prisma.adminLog.create({
+      data: { adminId: req.user!.userId, action: "CLOUDINARY_CLEANUP", details: `Deleted ${orphans.length} orphaned files` },
+    });
+
+    res.json({ deleted: orphans.length });
+  } catch {
+    res.status(500).json({ error: "Cleanup failed" });
+  }
 });
 
 export default router;

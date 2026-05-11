@@ -3,6 +3,7 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import { getPubClient, getSubClient, getRedis, REDIS_KEYS, REDIS_CHANNELS } from "./lib/redis";
 import { verifyAccessToken } from "./lib/jwt";
 import { prisma } from "./lib/prisma";
+import { setIo } from "./lib/io";
 
 export async function initSocket(httpServer: ReturnType<typeof import("http").createServer>) {
   const pubClient = getPubClient();
@@ -16,10 +17,10 @@ export async function initSocket(httpServer: ReturnType<typeof import("http").cr
   });
 
   io.adapter(createAdapter(pubClient, subClient));
+  setIo(io);
 
   const redis = getRedis();
 
-  // Auth middleware for Socket.io
   io.use(async (socket, next) => {
     const token =
       socket.handshake.auth.token ||
@@ -49,16 +50,50 @@ export async function initSocket(httpServer: ReturnType<typeof import("http").cr
     io.emit("stats:connections", count);
 
     socket.join(`user:${userId}`);
+    socket.broadcast.emit("user:online", { userId });
 
     socket.on("join:chat", (chatId: string) => socket.join(`chat:${chatId}`));
     socket.on("leave:chat", (chatId: string) => socket.leave(`chat:${chatId}`));
 
-    socket.on("message:send", async (data: { chatId: string; content: string; mediaUrl?: string; id?: string }) => {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { id: true, name: true, nickname: true, avatarUrl: true },
+    socket.on("message:send", async (data: {
+      chatId: string;
+      content: string;
+      mediaUrl?: string;
+      mediaType?: string;
+      mediaName?: string;
+      replyToId?: string;
+      id?: string;
+    }) => {
+      const [user, replyTo] = await Promise.all([
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: { id: true, name: true, nickname: true, avatarUrl: true },
+        }),
+        data.replyToId
+          ? prisma.message.findUnique({
+              where: { id: data.replyToId },
+              include: { user: { select: { id: true, name: true, nickname: true } } },
+            })
+          : null,
+      ]);
+
+      io.to(`chat:${data.chatId}`).emit("message:new", {
+        ...data,
+        userId,
+        user,
+        replyTo: replyTo ?? null,
+        reactions: [],
+        editedAt: null,
+        createdAt: new Date().toISOString(),
       });
-      io.to(`chat:${data.chatId}`).emit("message:new", { ...data, userId, user, createdAt: new Date().toISOString() });
+    });
+
+    socket.on("message:edited", (data: { chatId: string; messageId: string; content: string; editedAt: string }) => {
+      socket.to(`chat:${data.chatId}`).emit("message:edited", data);
+    });
+
+    socket.on("message:deleted", (data: { chatId: string; messageId: string }) => {
+      socket.to(`chat:${data.chatId}`).emit("message:deleted", data);
     });
 
     socket.on("typing:start", (chatId: string) => socket.to(`chat:${chatId}`).emit("typing:user", { userId, chatId }));
@@ -69,10 +104,10 @@ export async function initSocket(httpServer: ReturnType<typeof import("http").cr
       const n = await redis.decr(REDIS_KEYS.activeConnections);
       if (n < 0) await redis.set(REDIS_KEYS.activeConnections, 0);
       io.emit("stats:connections", Math.max(0, n));
+      io.emit("user:offline", { userId });
     });
   });
 
-  // Admin pub/sub actions — force disconnect blocked users
   const adminSub = getSubClient();
   adminSub.subscribe(REDIS_CHANNELS.blockUser, REDIS_CHANNELS.unblockUser);
 

@@ -10,25 +10,50 @@ datasource db {
 
 enum Role {
   USER
+  MODERATOR
   ADMIN
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  password     String
-  name         String
-  nickname     String?  @unique
-  role         Role     @default(USER)
-  isBlocked    Boolean  @default(false)
-  avatarUrl    String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(cuid())
+  email         String   @unique
+  password      String
+  name          String
+  nickname      String?  @unique
+  role          Role     @default(USER)
+  isBlocked     Boolean  @default(false)
+  emailVerified Boolean  @default(true)
+  avatarUrl     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  messages     Message[]
-  memberships  ChatMember[]
-  adminActions AdminLog[] @relation("AdminActions")
-  adminTargets AdminLog[] @relation("AdminTargets")
+  messages       Message[]
+  memberships    ChatMember[]
+  reactions      Reaction[]
+  adminActions   AdminLog[]             @relation("AdminActions")
+  adminTargets   AdminLog[]             @relation("AdminTargets")
+  emailTokens    EmailVerificationToken[]
+  passwordResets PasswordResetToken[]
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Chat {
@@ -45,11 +70,12 @@ model Chat {
 }
 
 model ChatMember {
-  id       String   @id @default(cuid())
-  userId   String
-  chatId   String
-  role     String   @default("MEMBER")
-  joinedAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  userId     String
+  chatId     String
+  role       String    @default("MEMBER")
+  lastReadAt DateTime?
+  joinedAt   DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
@@ -58,15 +84,36 @@ model ChatMember {
 }
 
 model Message {
-  id        String   @id @default(cuid())
-  content   String
+  id        String    @id @default(cuid())
+  content   String    @default("")
   mediaUrl  String?
+  mediaType String?
+  mediaName String?
   userId    String
   chatId    String
+  replyToId String?
+  editedAt  DateTime?
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chat      Chat       @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  replyTo   Message?   @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   Message[]  @relation("MessageReplies")
+  reactions Reaction[]
+}
+
+model Reaction {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String
   createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
 }
 
 model GlobalSettings {

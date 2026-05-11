@@ -21,6 +21,14 @@ interface User {
   createdAt: string;
 }
 
+const ROLES = ["USER", "MODERATOR", "ADMIN"] as const;
+
+const roleBadge = (role: string) => {
+  if (role === "ADMIN") return <Badge variant="default" className="text-xs">Admin</Badge>;
+  if (role === "MODERATOR") return <Badge className="text-xs bg-orange-500 hover:bg-orange-500 text-white">Mod</Badge>;
+  return null;
+};
+
 export function UserTable() {
   const { toast } = useToast();
   const [users, setUsers] = useState<User[]>([]);
@@ -30,6 +38,7 @@ export function UserTable() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [blockingId, setBlockingId] = useState<string | null>(null);
+  const [roleChangingId, setRoleChangingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,6 +67,20 @@ export function UserTable() {
     }
   }
 
+  async function changeRole(user: User, role: string) {
+    if (role === user.role) return;
+    setRoleChangingId(user.id);
+    try {
+      await api.post(`/api/admin/users/${user.id}/role`, { role });
+      toast({ title: `Role changed to ${role}` });
+      load();
+    } catch {
+      toast({ title: "Error changing role", variant: "destructive" });
+    } finally {
+      setRoleChangingId(null);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex gap-3 items-center flex-wrap">
@@ -80,6 +103,7 @@ export function UserTable() {
                     <th className="text-left p-3 font-medium text-muted-foreground">User</th>
                     <th className="text-left p-3 font-medium text-muted-foreground hidden sm:table-cell">Email</th>
                     <th className="text-left p-3 font-medium text-muted-foreground hidden md:table-cell">Joined</th>
+                    <th className="text-left p-3 font-medium text-muted-foreground">Role</th>
                     <th className="text-left p-3 font-medium text-muted-foreground">Status</th>
                     <th className="text-right p-3 font-medium text-muted-foreground">Actions</th>
                   </tr>
@@ -102,17 +126,34 @@ export function UserTable() {
                       <td className="p-3 hidden sm:table-cell text-muted-foreground truncate max-w-[180px]">{user.email}</td>
                       <td className="p-3 hidden md:table-cell text-muted-foreground">{new Date(user.createdAt).toLocaleDateString()}</td>
                       <td className="p-3">
-                        <div className="flex gap-1 flex-wrap">
-                          {user.role === "ADMIN" && <Badge variant="default" className="text-xs">Admin</Badge>}
-                          {user.isBlocked ? <Badge variant="destructive" className="text-xs">Blocked</Badge> : <Badge variant="success" className="text-xs">Active</Badge>}
+                        <div className="flex items-center gap-1.5">
+                          {roleBadge(user.role)}
+                          {roleChangingId === user.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                          ) : (
+                            <select
+                              value={user.role}
+                              onChange={(e) => changeRole(user, e.target.value)}
+                              className="text-xs border rounded px-1.5 py-0.5 bg-background text-foreground cursor-pointer"
+                              title="Change role"
+                            >
+                              {ROLES.map((r) => (
+                                <option key={r} value={r}>{r}</option>
+                              ))}
+                            </select>
+                          )}
                         </div>
                       </td>
+                      <td className="p-3">
+                        {user.isBlocked
+                          ? <Badge variant="destructive" className="text-xs">Blocked</Badge>
+                          : <Badge variant="success" className="text-xs">Active</Badge>
+                        }
+                      </td>
                       <td className="p-3 text-right">
-                        {user.role !== "ADMIN" && (
-                          <Button variant={user.isBlocked ? "outline" : "destructive"} size="sm" onClick={() => toggleBlock(user)} disabled={blockingId === user.id}>
-                            {blockingId === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : user.isBlocked ? <><ShieldOff className="w-3 h-3 mr-1" />Unblock</> : <><Shield className="w-3 h-3 mr-1" />Block</>}
-                          </Button>
-                        )}
+                        <Button variant={user.isBlocked ? "outline" : "destructive"} size="sm" onClick={() => toggleBlock(user)} disabled={blockingId === user.id}>
+                          {blockingId === user.id ? <Loader2 className="w-3 h-3 animate-spin" /> : user.isBlocked ? <><ShieldOff className="w-3 h-3 mr-1" />Unblock</> : <><Shield className="w-3 h-3 mr-1" />Block</>}
+                        </Button>
                       </td>
                     </tr>
                   ))}

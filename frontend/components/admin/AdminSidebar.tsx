@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { BarChart3, Users, MessageSquare, Settings, FileText, MessageCircle, ChevronLeft, Menu, X } from "lucide-react";
+import { BarChart3, Users, MessageSquare, Settings, FileText, MessageCircle, ChevronLeft, Menu, X, Cloud } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
@@ -13,6 +13,7 @@ const navItems = [
   { href: "/admin/groups", label: "Groups", icon: MessageSquare },
   { href: "/admin/settings", label: "Settings", icon: Settings },
   { href: "/admin/logs", label: "Audit Logs", icon: FileText },
+  { href: "/admin/cloudinary", label: "Cloudinary", icon: Cloud },
 ];
 
 export function AdminSidebar() {

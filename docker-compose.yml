@@ -38,8 +38,10 @@ services:
     container_name: cloud-chat-mailhog
     restart: unless-stopped
     ports:
-      - "1025:1025"
       - "8025:8025"
+    command: ["-auth-file=/etc/mailhog/auth"]
+    volumes:
+      - ./mailhog/auth:/etc/mailhog/auth:ro
 
   # ─── Backend (Express + Socket.io + Prisma) ────────────────────────────────
   backend:
