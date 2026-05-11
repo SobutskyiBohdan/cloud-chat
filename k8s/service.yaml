@@ -74,3 +74,50 @@ spec:
       port: 8025
       targetPort: 8025
   type: ClusterIP
+
+---
+# NodePort — зовнішній доступ через IP сервера
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-nodeport
+  namespace: cloud-chat
+spec:
+  selector:
+    app: cloud-chat-frontend
+  type: NodePort
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30080
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-nodeport
+  namespace: cloud-chat
+spec:
+  selector:
+    app: cloud-chat-backend
+  type: NodePort
+  ports:
+    - port: 4000
+      targetPort: 4000
+      nodePort: 30081
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailhog-nodeport
+  namespace: cloud-chat
+spec:
+  selector:
+    app: mailhog
+  type: NodePort
+  ports:
+    - name: web
+      port: 8025
+      targetPort: 8025
+      nodePort: 30825

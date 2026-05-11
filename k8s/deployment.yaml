@@ -6,7 +6,7 @@ metadata:
   labels:
     app: cloud-chat-backend
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: cloud-chat-backend
@@ -17,7 +17,8 @@ spec:
     spec:
       containers:
         - name: backend
-          image: your-registry/cloud-chat-backend:latest
+          image: cloud-chat-backend:latest
+          imagePullPolicy: Never
           ports:
             - containerPort: 4000
           envFrom:
@@ -58,7 +59,7 @@ metadata:
   labels:
     app: cloud-chat-frontend
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: cloud-chat-frontend
@@ -69,14 +70,11 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: your-registry/cloud-chat-frontend:latest
+          image: cloud-chat-frontend:latest
+          imagePullPolicy: Never
           ports:
             - containerPort: 3000
           env:
-            - name: NEXT_PUBLIC_API_URL
-              value: "https://api.cloud-chat.app"
-            - name: NEXT_PUBLIC_SOCKET_URL
-              value: "https://api.cloud-chat.app"
             - name: JWT_ACCESS_SECRET
               valueFrom:
                 secretKeyRef:
@@ -127,13 +125,17 @@ spec:
       containers:
         - name: postgres
           image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5432
           env:
             - name: POSTGRES_USER
               value: postgres
             - name: POSTGRES_PASSWORD
-              value: postgres
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-chat-secrets
+                  key: POSTGRES_PASSWORD
             - name: POSTGRES_DB
               value: cloud_chat
           volumeMounts:
@@ -173,6 +175,7 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 6379
           command: ["redis-server", "--appendonly", "yes"]
@@ -213,6 +216,7 @@ spec:
       containers:
         - name: mailhog
           image: mailhog/mailhog
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 1025
             - containerPort: 8025
