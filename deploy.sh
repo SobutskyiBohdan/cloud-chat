@@ -32,6 +32,6 @@ kubectl rollout status deployment/cloud-chat-frontend -n cloud-chat --timeout=18
 
 echo ""
 echo "Done!"
-echo "  Frontend : http://$SERVER_IP:30080"
+echo "  Frontend : http://$SERVER_IP:30082"
 echo "  Backend  : http://$SERVER_IP:30081"
 echo "  Mailhog  : http://$SERVER_IP:30825"

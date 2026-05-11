@@ -89,7 +89,7 @@ spec:
   ports:
     - port: 3000
       targetPort: 3000
-      nodePort: 30080
+      nodePort: 30082
 
 ---
 apiVersion: v1
